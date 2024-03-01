@@ -1,6 +1,8 @@
 ---
 title: "Supervised ML problems"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 # Support vector machines
