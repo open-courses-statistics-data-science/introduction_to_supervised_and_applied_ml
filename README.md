@@ -2,7 +2,7 @@
 
 The lectures are as follows:
 
-- [A survey of supervised machine learning methods](https://html-preview.github.io/?url=https://github.com/ben18785/introduction_to_supervised_and_applied_ml/lectures/intro_to_applied_ml.html)
+- [A survey of supervised machine learning methods](https://html-preview.github.io/?url=https://github.com/ben18785/introduction_to_supervised_and_applied_ml/tree/main/lectures/intro_to_applied_ml.html)
 - [Tips in applied supervised machine learning](lectures/intro_to_ml_supervised.html)
 
 The problem sets are as follows:
