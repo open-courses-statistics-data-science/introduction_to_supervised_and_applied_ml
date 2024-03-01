@@ -1,0 +1,511 @@
+---
+title: "Applied ML"
+author: | 
+  | Ben Lambert
+output:
+  revealjs::revealjs_presentation:
+    theme: white
+    highlight: pygments
+    center: true
+    css: ['test.css','bootstrap.css','bootstrap-grid.css','bootstrap-reboot.min.css','bootstrap-grid.min.css','bootstrap.min.css','bootstrap-reboot.css']
+
+---
+
+## Material
+
+- feature engineering
+- metrics for classification and regression
+- cross-validation
+
+# Feature engineering
+
+## What is feature engineering?
+
+1. conversion of raw data into form amenable to ML estimation $\implies$ data munging
+2. designing features that have predictive power $\implies$ data visualisation
+
+1 is necessary for all ML models; 2 is most necessary for non-deep learning models
+
+## Example dataset: California house prices (Kaggle)
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+library(kableExtra)
+library(tidyverse)
+library(reshape2)
+df <- read.csv("data/housing.csv") %>% 
+  mutate(ocean_proximity=as.character(ocean_proximity)) %>% 
+  mutate(ocean_proximity=if_else(ocean_proximity=="<1H OCEAN", "LESS 1H OCEAN",
+                                 ocean_proximity))
+rand_idx <- sample(1:nrow(df), 100)
+kable(df[rand_idx, ],format="html",escape = F) %>% 
+  kable_styling() %>%
+  kableExtra::scroll_box(width = "100%", height = "400px")
+```
+
+## Aim: develop model to predict house prices
+
+## Examine data (note this is at block level)
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  select(-ocean_proximity) %>% 
+  melt() %>% 
+  ggplot(aes(x=value)) +
+  geom_histogram() +
+  facet_wrap(~variable, scales="free") +
+  theme(text=element_text(size=12),
+        strip.text = element_text(size=20))
+```
+
+## Missing features
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  summarise_all(.funs = ~sum(is.na(.))) %>% 
+  melt() %>% 
+  ggplot(aes(x=fct_reorder(variable, value), y=value)) +
+  geom_col() +
+  xlab("variable") +
+  coord_flip() +
+  theme(text=element_text(size=20))
+```
+
+## Handling missing data: options
+
+- drop rows with missing obs.
+- drop columns (i.e. variables) with lots of missing obs.
+- impute observations
+
+## Imputation
+
+- lots of options
+- simple method: use median (for continuous data) or mode (for categorical / ordinal)
+- model dependencies: regress variables on all other variables and use this
+- models incorporating uncertainty: useful if substantial portion missing
+
+## How to handle categorical data?
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  group_by(ocean_proximity) %>% 
+  count() %>% 
+  arrange(desc(n)) %>% 
+  ggplot(aes(x=fct_reorder(ocean_proximity, n), y=n, label=n)) +
+  geom_col() +
+  geom_text() +
+  xlab("ocean_proximity") +
+  coord_flip() +
+  theme(text=element_text(size=20))
+```
+
+## Median income by ocean proximity
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  group_by(ocean_proximity) %>% 
+  summarise(median=median(median_house_value),
+            lower=quantile(median_house_value, 0.25),
+            upper=quantile(median_house_value, 0.75)) %>% 
+  ggplot(aes(x=fct_reorder(ocean_proximity, median), y=median)) +
+  geom_pointrange(aes(ymin=lower, ymax=upper)) +
+  xlab("ocean_proximity") +
+  coord_flip() +
+  theme(text=element_text(size=20))
+```
+
+## One-hot encoding
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 <- df %>% 
+  mutate(coast=if_else(ocean_proximity%in%c("LESS 1H OCEAN", "NEAR BAY", "NEAR OCEAN"),
+                       1, 0)) %>% 
+  mutate(island=if_else(ocean_proximity=="ISLAND", 1, 0))
+
+df_temp <- df1[rand_idx, ] %>% 
+  select(ocean_proximity, coast, island)
+
+kable(df_temp[1:100, ], format="html",escape = F) %>% 
+  kable_styling() %>%
+  kableExtra::scroll_box(width = "100%", height = "400px")
+```
+
+## House price versus continuous attributes
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  select(-ocean_proximity) %>% 
+  melt(id.vars="median_house_value") %>% 
+  ggplot(aes(x=value, y=median_house_value)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", se=F) +
+  facet_wrap(~variable, scales="free_x") +
+  theme(text=element_text(size=12),
+        strip.text = element_text(size=20))
+```
+
+## Income vs house price
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df %>% 
+  select(-ocean_proximity) %>% 
+  melt(id.vars="median_house_value") %>% 
+  filter(variable=="median_income") %>% 
+  ggplot(aes(x=value, y=median_house_value)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", se=F) +
+  facet_wrap(~variable, scales="free_x") +
+  theme(text=element_text(size=20))
+```
+
+## Handling censored observations
+
+- leave them as they are
+- or could drop censored observations altogether
+- (better) impute them
+- (better still) explicitly model uncertainty in them 
+
+## Feature creation: rooms per household
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 <- df1 %>% 
+  mutate(rooms_per_household=total_rooms / households)
+df1 %>% 
+  select(-ocean_proximity) %>% 
+  melt(id.vars="median_house_value") %>% 
+  filter(variable==c("households", "total_rooms", "rooms_per_household")) %>% 
+  ggplot(aes(x=value, y=median_house_value)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", se=F) +
+  facet_wrap(~variable, scales="free_x") +
+  ylim(NA, 5e5) +
+  scale_x_log10() +
+  theme(text=element_text(size=20))
+```
+
+## Bedrooms per room
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 <- df1 %>% 
+  mutate(bedrooms_per_room=total_bedrooms / total_rooms)
+df1 %>% 
+  select(-ocean_proximity) %>% 
+  melt(id.vars="median_house_value") %>% 
+  filter(variable==c("total_bedrooms", "total_rooms", "bedrooms_per_room")) %>% 
+  ggplot(aes(x=value, y=median_house_value)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", se=F) +
+  facet_wrap(~variable, scales="free_x") +
+  ylim(NA, 5e5) +
+  scale_x_log10() +
+  theme(text=element_text(size=20))
+```
+
+## Persons per house
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 <- df1 %>% 
+  mutate(persons_per_household=population / households)
+df1 %>% 
+  select(-ocean_proximity) %>% 
+  melt(id.vars="median_house_value") %>% 
+  filter(variable==c("population", "households", "persons_per_household")) %>% 
+  ggplot(aes(x=value, y=median_house_value)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", se=F) +
+  facet_wrap(~variable, scales="free_x") +
+  ylim(NA, 5e5) +
+  scale_x_log10() +
+  theme(text=element_text(size=18))
+```
+
+## Feature scaling
+
+- ML algorithm training is much improved if features on similar scales
+- rescaled features can also better represent relationships between variables
+
+## House price rescaling (ignoring upper limits)
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 <- df1 %>% 
+  filter(median_house_value < max(median_house_value))
+df1 %>% 
+  ggplot(aes(x=median_house_value)) +
+  geom_histogram() +
+  theme(text=element_text(size=20))
+```
+
+## Option: standardise
+
+Subtract mean and divide through by sd
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 %>% 
+  mutate(median_house_value_scaled=scale(median_house_value)[, 1]) %>% 
+  ggplot(aes(x=median_house_value_scaled)) +
+  geom_histogram() +
+  theme(text=element_text(size=20))
+```
+
+## Option: normalise
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 %>% 
+  mutate(median_house_value_scaled=(median_house_value - min(median_house_value)) / (max(median_house_value) - min(median_house_value))) %>% 
+  ggplot(aes(x=median_house_value_scaled)) +
+  geom_histogram() +
+  theme(text=element_text(size=20))
+```
+
+## Option: log transform
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df1 %>% 
+  mutate(median_house_value_scaled=log10(median_house_value)) %>% 
+  ggplot(aes(x=median_house_value_scaled)) +
+  geom_histogram() +
+  theme(text=element_text(size=20))
+```
+
+## Feature scaling: no golden rule
+
+- graph features before/after scaling: outliers can seriously affect scaling
+- build feature scaling options into ML pipeline
+- evaluate impact of different scaling options on test set prediction
+
+## Importance of pipelines
+
+- many options for imputation, feature creation, feature scaling
+- ML software, for example, Scikit-learn in Python has great options for creating data processing pipelines incorporating these
+- pipelines make it easy to cleanly (and without error) process data
+- and to test out different options
+
+## Questions?
+
+# Metrics
+
+## Metrics for regression
+
+most common, root mean squared error:
+
+\begin{equation}
+\text{RMSE} = \sqrt{\frac{1}{K}\sum_{i=1}^{K} (\hat{y}_i - y_i)^2}
+\end{equation}
+
+also used:
+
+\begin{equation}
+R^2 = \frac{\text{variation explained by model}}{\text{total variation}}
+\end{equation}
+
+## Metrics for binary classification: confusion matrix
+```{r, echo = FALSE, out.width = "500px",fig.align="center"}
+  knitr::include_graphics("figures/metrics_accuracy.png")
+```
+
+## True positive and false positive rate
+```{r, echo = FALSE, out.width = "500px",fig.align="center"}
+  knitr::include_graphics("figures/metrics_tp_fp.png")
+```
+
+## Classification boundaries
+
+classifiers output class probabilities. For example,
+
+\begin{equation}
+\text{Pr}(y_i=\text{cat}|x_i) = 0.4
+\end{equation}
+
+an obvious choice for classification boundary is $\text{Pr}(y_i=\text{cat}|x_i) = 0.5$. But this doesn't work well for imbalanced datasets. Want good performance across all boundaries
+
+## Classification boundaries
+
+vary boundary cutoff value and calculate true positive rates (TPR) and false positive rates (FPR). 
+
+When $\text{Pr}(y_i=\text{cat}|x_i) = 0.0$ is boundary $\implies$ all positive:
+
+- $\text{TPR}=\frac{\text{TP}}{\text{TP}+\text{FN}} = \frac{\text{TP}}{\text{TP} + 0} = 1$ 
+- $\text{FPR}=\frac{\text{FP}}{\text{FP}+\text{TN}} = \frac{\text{FP}}{\text{FP} + 0} = 1$
+
+When $\text{Pr}(y_i=\text{cat}|x_i) = 1.0$ is boundary $\implies$ all negative:
+
+- $\text{TPR}=\frac{\text{TP}}{\text{TP}+\text{FN}} = \frac{0}{0 + \text{FN}} = 0$ 
+- $\text{FPR}=\frac{\text{FP}}{\text{FP}+\text{TN}} = \frac{0}{0 + \text{TN}} = 0$
+
+## Random classifier: ignores rows and (here) assigns 1/4 to cats
+```{r, echo = FALSE, out.width = "500px",fig.align="center"}
+  knitr::include_graphics("figures/metrics_random_classifier.png")
+```
+
+## ROC and AUC: random classifier
+```{r, echo = FALSE, out.width = "800px",fig.align="center"}
+  knitr::include_graphics("figures/metrics_roc_random.png")
+```
+
+## ROC and AUC: random classifier
+```{r, echo = FALSE, out.width = "800px",fig.align="center"}
+  knitr::include_graphics("figures/metrics_roc_better.png")
+```
+
+
+# Cross-validation
+
+## Applying a gradient boosted machine
+
+- use a gradient boosted machine (a form of decision tree) to predict house price
+- use lots of deep trees
+- (on a subset of full data)
+
+## Result
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+library(caret)
+df2 <- df1 %>%
+  mutate(median_house_value=log10(median_house_value)) %>%
+  select(-one_of("latitude", "longitude", "population", "households", "total_rooms", "total_bedrooms", "ocean_proximity")) %>%
+  mutate(housing_median_age=scale(housing_median_age)[, 1]) %>%
+  select(-island)
+df2 <- df2[complete.cases(df1), ]
+library(gbm)
+id_small <- sample(1:nrow(df2), 300)
+df_temp <- df2[id_small, ]
+fit <- gbm(median_house_value~., data = df_temp, distribution="gaussian",
+           n.trees = 5000, interaction.depth = 10)
+price_pred_train <- predict(fit, df_temp)
+rmse <- RMSE(10^df_temp$median_house_value, 10^price_pred_train)
+tibble(actual=10^df_temp$median_house_value,
+       predicted=10^price_pred_train) %>% 
+  ggplot(aes(x=predicted, y=actual)) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  xlab("predicted house price $") +
+  ylab("actual house price $") +
+  ggtitle(paste0("RMSE = $", round(rmse))) +
+  theme(text=element_text(size=20))
+```
+
+## Performance of model on independent data
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+df_other <- df2[-id_small, ]
+df_other <- df_other[1:1000, ]
+
+price_pred_train <- predict(fit, df_other)
+rmse <- RMSE(10^df_temp$median_house_value, 10^price_pred_train)
+tibble(actual=10^df_other$median_house_value,
+       predicted=10^price_pred_train) %>% 
+  ggplot(aes(x=predicted, y=actual)) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  xlab("predicted house price $") +
+  ylab("actual house price $") +
+  ggtitle(paste0("RMSE = $", round(rmse))) +
+  theme(text=element_text(size=20))
+```
+
+## How to tune hyperparameters?
+
+- more complex models $\implies$ explains more variation in a given dataset
+- some variation is idiosyncratic nuisance variation $\implies$ fits noise not signal
+- instead, fit data to training set and evaluate performance on separate cross-validation set
+- use cross-validation set performance to determine optimal hyperparameters
+
+## Train and cross-validation set performance
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+# training_ids <- sample(1:nrow(df_temp), 210)
+# train_df <- df_temp[training_ids, ]
+# test_df <- df_temp[-training_ids, ]
+# 
+# trees <- c(1, 5, 10, 20, 100, 200, 500, 1000, 2000)
+# m_rmse <- matrix(nrow = length(trees), ncol = 4)
+# for(i in seq_along(trees)) {
+#   print(i)
+#   fit <- gbm(median_house_value~., data = train_df, distribution="gaussian",
+#            n.trees = trees[i], interaction.depth = 10)
+#   price_pred_train <- predict(fit, train_df)
+#   price_pred_test <- predict(fit, test_df)
+#   rmse_train <- RMSE(10^train_df$median_house_value, 10^price_pred_train)
+#   rmse_test <- RMSE(10^test_df$median_house_value, 10^price_pred_test)
+#   rmse_median <- RMSE(10^train_df$median_house_value,
+#                       median(10^train_df$median_house_value))
+#   m_rmse[i, ] <- c(trees[i], rmse_train, rmse_test, rmse_median)
+# }
+# colnames(m_rmse) <- c("trees", "train", "test", "test-median")
+# m_rmse <- m_rmse %>%
+#   as.data.frame()
+# saveRDS(m_rmse, "data/housing_overfitting.rds")
+m_rmse <- readRDS("data/housing_overfitting.rds")
+m_rmse <- m_rmse %>% 
+  melt(id.vars="trees")
+
+ggplot(m_rmse %>% filter(variable!="test-median"),
+       aes(x=as.factor(trees), y=value, colour=variable, group=variable)) +
+  geom_line() +
+  geom_point() +
+  scale_x_discrete() +
+  xlab("Trees") +
+  ylab("RMSE, $") +
+  theme(text=element_text(size=20)) +
+  geom_line(data=m_rmse %>% filter(variable=="test-median"),
+            colour="black", linetype=2) +
+  scale_color_brewer("Dataset", palette = "Dark2")
+```
+
+## Cross-validation approaches
+
+- using a single train / CV set risks tuning to the noise in the CV set
+- solution: use many train / CV sets along subsets of your data
+- example: k-fold cross validation
+
+## 3-fold cross-validation
+```{r, echo = FALSE, out.width = "800px",fig.align="center"}
+  knitr::include_graphics("figures/k-fold.png")
+```
+
+## How many folds?
+```{r, echo = FALSE, out.width = "800px",fig.align="center"}
+  knitr::include_graphics("figures/k-fold-learning-curve.png")
+```
+
+## How to assess predictive accuracy?
+
+- could state predictive accuracy as that achieved on CV set $\implies$ overestimate
+- instead hold aside a separate test set on which a model is evaluated only once
+- make test set similar to task model eventually used for
+- typically something like 70%-90% train + CV and leftover is test
+
+## Workflow
+```{r, echo = FALSE, out.width = "500px",fig.align="center"}
+  knitr::include_graphics("figures/workflow.png")
+```
+
+## Questions?
+
+# Understanding ML prediction
+
+## Data visualisation
+
+- in statistics in general no important result should come as a (total) surprise
+- especially true in ML
+- should know your problem well enough before starting ML proper
+- $\implies$ data visualisation key
+- (also building simpler more understandable models first can help)
+
+## Variable importance
+
+- after fitting model $\implies$ good to know which variable drives performance
+- straightforward for simple models like linear and logistic regression
+- harder for more black-boxy models but methods exist
+
+## Example: RF variable importance
+
+```{r, echo = FALSE, out.width = "600px",fig.align="center"}
+  knitr::include_graphics("figures/rf_var_importance.png")
+```
+
+# Practical things
+
+## Which model to choose when
+
+- simpler models can be useful to guide complex models
+- use performance on validation set to guide model choice
+- for rectangular data $\implies$ RFs and gradient boosted models like XGBoost best
+- for data with richer structure $\implies$ deep learning
+
+## Golden rules of supervised ML
+
+1. understand your data: visualise
+2. pre-process data and design useful features; build pipelines
+3. determine what is a good baseline accuracy and, if possible, target accuracy
+4. make sure you align CV and test sets
+5. know how your ML model works; what its hyperparameters mean
+6. choose hyperparameters via a grid search
+7. examine literature for domain level model choice and hyperparameter choice
+
+## Questions?
+
+---
+
+

@@ -1,0 +1,142 @@
+---
+title: "Applied ML problems"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(reshape2)
+library(tidymodels)
+```
+
+For the problem below, we will be using an extended version of the wine dataset I showed during the unsupervised ML lecture. The data is in "winemag-data_first150k_10000_processed_unscaled.csv" looks like the below. Note that I have created a host of binary variables which capture whether words or phrases appear in a critic's description of the wine.
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(kableExtra)
+df <- readRDS("data/winemag-data_first150k_10000_processed_unscaled.rds")%>% select(-description)
+kable(df[1:100, ],format="html",escape = F, col.names = colnames(df)) %>% 
+  kable_styling() %>%
+  kableExtra::scroll_box(width = "100%", height = "400px")
+```
+
+The questions that I give are open-ended because, in developing ML algorithms, this represents what happens in reality. Nonetheless, I include a list of things that you may want to consider when building the algorithm:
+
+1. What metrics to use to measure accuracy?
+2. What is a reasonable baseline accuracy?
+3. Do any features need to be created from the current set? What visualisations do I need to do to determine what these features should be?
+4. Should any existing features be scaled?
+5. How should I split my data into training, CV and testing sets? (I may want to use ML software's inbuilt functionality for CV.)
+6. What ML methods should I try? Probably the best performing will be RFs or gradient boosted models (other than neural nets, possibly).
+7. How to choose hyperparameters?
+
+
+Build a model to predict the price of wine. To make the problem manageable, you may want to consider data for only the following countries: US, France, Italy, Spain, Portugal, Germany, Chile, Argentina.
+```{r}
+df <- readRDS("data/winemag-data_first150k_10000_processed_unscaled.rds") %>% 
+  filter(country%in%c("US", "France", "Italy", "Germany", "Chile", "Argentina")) %>% 
+  droplevels()
+```
+
+## Explore features
+```{r}
+df %>% 
+  group_by(country) %>% 
+  summarise(price=mean(price)) %>% 
+  arrange(desc(price))
+```
+
+
+Make training and testing sets
+```{r}
+# creates binary split with by default 75% data in training set
+data_split <- df %>% 
+  initial_split(strata = price)
+df_train <- training(data_split)
+df_test <- testing(data_split)
+```
+
+
+Determine baseline error rate of predicting using median price
+```{r}
+med <- median(df_train$price)
+rmse(df_test %>% mutate(.pred=med), truth = price, estimate = .pred)
+```
+
+Determine second baseline using linear regression with only price
+```{r}
+aLM <- lm(price~points, data=df_train)
+test <- predict(aLM, df_test)
+caret::RMSE(test, df_test$price)
+```
+
+
+
+
+Preprocess data using recipes: this is like a pipeline in Scikit-Learn. I haven't normalized price here as it didn't seem to make much difference to outcomes.
+```{r}
+wine_rec <- df_train %>% 
+  recipe(price ~ .) %>% 
+  update_role(description, designation, province, region_1, region_2, variety, winery, review_id,
+              new_role = "ID") %>% 
+  step_dummy(country) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(points)
+
+# look at preprocessed training data
+temp <- wine_rec %>% 
+  prep(retained=TRUE) %>% 
+  bake(new_data=NULL)
+glimpse(temp)
+```
+
+Create a model workflow using RFs
+```{r}
+rf_mod <- rand_forest(trees = 1000) %>%
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+```
+
+Create a workflow stringing preprocessing and model workflows together
+```{r}
+wine_workflow <- workflow() %>% 
+  add_model(rf_mod) %>% 
+  add_recipe(wine_rec)
+wine_workflow
+```
+
+Now fit model
+```{r}
+wine_fit <- wine_workflow %>% 
+  fit(data=df_train)
+wine_fit
+```
+
+Compute error on training and test set
+```{r}
+predict(wine_fit, df_train) %>% 
+  bind_cols(df_train) %>% 
+  rmse(truth=price, .pred)
+tester_df <- predict(wine_fit, df_test) %>% 
+  bind_cols(df_test)
+ggplot(tester_df, aes(x=.pred, y=price)) +
+  geom_point() +
+  geom_smooth() +
+  geom_abline()
+tester_df %>% 
+  rmse(truth=price, .pred)
+```
+
+Look at variable importance
+```{r}
+ranger_obj <- pull_workflow_fit(wine_fit)$fit
+sort(ranger_obj$variable.importance)
+```
+
+
+Quite a big difference between training and testing sets! What happened? We overfit!
+
+
+
+Other baseline is what is predictive power just using price: could be done using linear regression

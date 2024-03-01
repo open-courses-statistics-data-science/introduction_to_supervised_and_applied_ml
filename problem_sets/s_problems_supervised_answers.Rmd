@@ -1,0 +1,652 @@
+---
+title: "Supervised ML problems"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(reshape2)
+library(e1071)
+```
+
+
+# Support vector machines
+1. Suppose a categorical label: $y\in\{0,1\}$ and a data generating process: $x|y=0\sim\mathcal{N}(0,1)$ and $x|y=1\sim\mathcal{N}(2, 1)$. Find the optimal classification boundary. In doing so, determine the Bayes optimal classification accuracy. In both cases, assume categories are equally as likely to occur in the data.
+
+Drawing the two densities
+```{r}
+n <- 100
+x <- seq(-2, 5, length.out = n)
+y0 <- map_dbl(x, ~dnorm(.))
+y1 <- map_dbl(x, ~dnorm(., 2, 1))
+tibble(x, y0, y1) %>% 
+  melt(id.vars="x") %>% 
+  ggplot(aes(x, y=value, colour=as.factor(variable))) +
+  geom_line()
+```
+
+We see that the the densities crossover at a point. Let's find what it is.
+
+$\mathcal{N}(x|0,1) = \mathcal{N}(x|2,1)$
+
+which, by symmetry, occurs when $x=1$.
+
+So the optimal boundary is predict $y=0$ when $x < 1$ and $y=1$ when $x>1$. At the boundary, predict either with probability $1/2$.
+
+The optimal classification accuracy is $Pr(x<1|y=0) = \int_{-\infty}^{1} \mathcal{N}(x|0,1) \approx 84\%$.
+
+2. Assume that $(x_1,x_2)'|y=0\sim\mathcal{N}((0,0)', I)$ and $(x_1,x_2)'|y=1\sim\mathcal{N}((1, 1)',I)$. Simulate 100 draws from each category. Use the parametric form of each conditional density to classify each point and visualise these; in doing so, calculate the optimal classification rate on these data.
+
+```{r}
+library(mvtnorm)
+rmvrnorm2D <- function(n, mux, muy, sigmax, sigmay, rho){
+  return(rmvnorm(n, c(mux, muy),
+                 matrix(c(sigmax^2, sigmax * sigmay * rho,
+                          sigmax * sigmay * rho, sigmay^2),
+                        ncol = 2)))
+}
+
+n <- 100
+x0 <- rmvrnorm2D(n, 0, 0, 1, 1, 0) %>% 
+  as.data.frame() %>% 
+  mutate(class=0)
+x1 <- rmvrnorm2D(n, 1, 1, 1, 1, 0) %>% 
+  as.data.frame() %>% 
+  mutate(class=1)
+
+# true classes
+x <- x0 %>% 
+  bind_rows(x1)
+x %>% 
+  ggplot(aes(x=V1, y=V2, colour=as.factor(class))) +
+  geom_point()
+```
+
+Calculate the probability density for each point. In doing so, this yields a probability of belonging to each class (where we know each are equally likely):
+
+$Pr(y=1|x_1,x_2) = \frac{p(x_1,x_2|y=1) Pr(y=1)}{p(x_1,x_2)}=\frac{p(x_1,x_2|y=1) Pr(y=1)}{p(x_1,x_2|y=1) Pr(y=1) + p(x_1,x_2|y=0) Pr(y=0)}$
+
+```{r}
+dmvrnorm2D <- function(x, mux, muy, sigmax, sigmay, rho, log=FALSE){
+  return(dmvnorm(x, c(mux, muy),
+                 matrix(c(sigmax^2, sigmax * sigmay * rho,
+                          sigmax * sigmay * rho, sigmay^2),
+                         ncol = 2),
+                 log))
+}
+
+p0 <- map_dbl(seq_along(x$V1), ~dmvrnorm2D(x[., 1:2], 0, 0, 1, 1, 0))
+p1 <- map_dbl(seq_along(x$V1), ~dmvrnorm2D(x[., 1:2], 1, 1, 1, 1, 0))
+
+df <- x %>% 
+  mutate(p0=p0, p1=p1) %>% 
+  mutate(class_pred=if_else(p1 > p0, 1, 0)) %>% 
+  mutate(correct=if_else(class==class_pred, 1, 0))
+
+mean(df$correct)
+```
+
+Visualise incorrect predictions
+```{r}
+df %>% 
+  ggplot(aes(x=V1, y=V2, colour=as.factor(correct))) +
+  geom_point()
+```
+
+3. What is the optimal classification boundary here?
+
+The optimal classification boundary is given by:
+
+\begin{equation}
+\mathcal{N}(x_1,x_2|(0,0)', I) = \mathcal{N}(x_1,x_2|(1,1)', I)
+\end{equation}
+
+Solving these equations, we find that: $x_2= 1 - x_1$. Plotting this on the data distribution:
+```{r}
+x %>% 
+  ggplot(aes(x=V1, y=V2, colour=as.factor(class))) +
+  geom_point() +
+  stat_function(fun = function(V1) 1 - V1, colour="black") +
+  coord_fixed() +
+  scale_y_continuous(limits = c(-4, 4)) +
+  scale_x_continuous(limits = c(-4, 4))
+```
+
+4. Apply (linear) SVM to the dataset you generated in the previous question. What's its predictive accuracy on your dataset? How close does it get to the optimal classification boundary?
+
+Not bad but overfits a bit.
+```{r}
+df <- df %>% 
+  mutate(class=as.factor(class))
+svmfit <- svm(class ~ ., data = df %>% select(V1, V2, class), kernel = "linear", cost = 10, scale = FALSE,
+              probability=TRUE)
+
+## predictive accuracy
+class1 <- predict(svmfit, df)
+df %>% 
+  select(class) %>% 
+  mutate(class_pred=class1) %>% 
+  mutate(correct=if_else(class==class_pred, 1, 0)) %>% 
+  summarise(mean(correct))
+
+# plot classification boundary
+test_df <- expand_grid(V1=seq(-4, 4, length.out = 100), V2=seq(-4, 4, length.out = 100))
+classes <- predict(svmfit, test_df)
+test_df %>% 
+  mutate(class_pred=classes) %>% 
+  ggplot(aes(x=V1, y=V2, colour=as.factor(class_pred))) +
+  geom_point() +
+  stat_function(fun = function(V1) 1 - V1, colour="black") +
+  coord_fixed() +
+  scale_y_continuous(limits = c(-4, 4)) +
+  scale_x_continuous(limits = c(-4, 4))
+```
+
+How do predicted class probabilities compare with true ones?
+```{r}
+class_probs <- predict(svmfit, df, probability = T)
+```
+
+
+
+5. Fit an SVM with a radial basis function kernel. What's its predictive accuracy? What do its classification boundaries look like?
+```{r}
+df <- df %>% 
+  mutate(class=as.factor(class))
+svmfit_radial <- svm(class ~ ., data = df %>% select(V1, V2, class), kernel = "radial", cost = 10, scale = FALSE)
+
+## predictive accuracy
+class1 <- predict(svmfit_radial, df)
+df %>% 
+  select(class) %>% 
+  mutate(class_pred=class1) %>% 
+  mutate(correct=if_else(class==class_pred, 1, 0)) %>% 
+  summarise(mean(correct))
+
+# plot classification boundary
+test_df <- expand_grid(V1=seq(-4, 4, length.out = 100), V2=seq(-4, 4, length.out = 100))
+classes <- predict(svmfit_radial, test_df)
+test_df %>% 
+  mutate(class_pred=classes) %>% 
+  ggplot(aes(x=V1, y=V2, colour=as.factor(class_pred))) +
+  geom_point() +
+  stat_function(fun = function(V1) 1 - V1, colour="black") +
+  coord_fixed() +
+  scale_y_continuous(limits = c(-4, 4)) +
+  scale_x_continuous(limits = c(-4, 4))
+```
+
+6. Compare the predictive accuracy of each SVM model on a new dataset drawn from the same distribution. Which SVM performs best?
+
+It should be the linear one as the radial one overfits the data.
+```{r}
+n <- 100
+x0 <- rmvrnorm2D(n, 0, 0, 1, 1, 0) %>% 
+  as.data.frame() %>% 
+  mutate(class=0)
+x1 <- rmvrnorm2D(n, 1, 1, 1, 1, 0) %>% 
+  as.data.frame() %>% 
+  mutate(class=1)
+x <- x0 %>% 
+  bind_rows(x1)
+class_linear <- predict(svmfit, x)
+class_radial <- predict(svmfit_radial, x)
+
+x %>% 
+  mutate(class_linear=class_linear,
+         class_radial=class_radial) %>% 
+  summarise(mean(class==class_linear), mean(class==class_radial))
+```
+
+7. Generate data for one class by sampling $(x_1,x_2)'|y=0\sim\mathcal{N}((0,0)', I)$. For the other class sample from $(x_1,x_2)'|y=1\sim\mathcal{N}((0,0)', 2 I)$ such that $x_1^2 + x_2^2 \geq 3^2$.
+```{r}
+n <- 100
+x0 <- rmvrnorm2D(n, 0, 0, 1, 1, 0) %>% 
+  as.data.frame() %>% 
+  mutate(class=0)
+
+f_sample_constrained <- function(r) {
+  x_test <- rmvrnorm2D(1, 0, 0, 2, 2, 0)[1, ]
+  while((x_test[1]^2 + x_test[2]^2) < r^2)
+    x_test <- rmvrnorm2D(1, 0, 0, 2, 2, 0)[1, ]
+  return(x_test)
+}
+
+x1 <- matrix(nrow = n, ncol = 2)
+for(i in 1:n)
+  x1[i, ] <- f_sample_constrained(3)
+
+x1 <- x1 %>% 
+  as.data.frame() %>% 
+  mutate(class=1)
+
+x <- x0 %>% 
+  bind_rows(x1) %>% 
+  mutate(class=as.factor(class))
+x %>% 
+  ggplot(aes(x=V1, y=V2, colour=class)) +
+  geom_point()
+```
+
+8. Fit a classifier using radial basis functions and visualise the decision boundary
+```{r}
+svmfit_radial <- svm(class ~ ., data = x, kernel = "radial", cost = 10, scale = FALSE)
+
+test_df <- expand_grid(V1=seq(-6, 6, length.out = 100), V2=seq(-6, 6, length.out = 100))
+classes <- predict(svmfit_radial, test_df)
+full_df <- test_df %>% 
+  mutate(class=classes) %>% 
+  mutate(type="simulated") %>% 
+  bind_rows(x %>% mutate(type="actual"))
+ 
+ggplot(data=full_df %>% filter(type=="simulated"),
+       aes(x=V1, y=V2, colour=as.factor(class))) +
+  geom_point(alpha=0.1) +
+  geom_point(data=full_df %>% filter(type=="actual"))
+```
+
+# Regression
+
+1. Suppose a linear regression model of the form:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+and assume you have access to $(y_i,x_i)_{i=1}^{K}$. Show that the maximum likelihood estimators of the parameters are the same as those minimising the mean squared loss function:
+
+\begin{equation}
+L = \frac{1}{K} \sum_{i=1}^{K} (y_i - (\alpha + \beta x_i))^2
+\end{equation}
+
+The likelihood is:
+
+\begin{equation}
+\mathcal{L} = \prod_{i=1}^{K} \frac{1}{\sqrt{2\pi\sigma^2}} \exp(-(y_i - (\alpha + \beta x_i))^2/2\sigma^2)
+\end{equation}
+
+Writing down the log-likelihood, we have:
+
+\begin{equation}
+\mathcal{l} = - \frac{K}{2}\log 2\pi - \frac{K}{2}\log \sigma^2 - \frac{1}{2\sigma^2} \sum_{i=1}^{K} (y_i - (\alpha + \beta x_i))^2
+\end{equation}
+
+We now note that the squared loss term in the log-likelihood is of the same form as that in the mean squared loss function, so the parameter estimators are the same in both cases.
+
+
+2. Generate simulated regression data via:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+where $\alpha=1$, $\beta=1$, $\sigma=1$ and $x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(0, 4)$ for $i =1,...,100$.
+
+```{r}
+alpha <- 1
+beta <- 1
+sigma <- 1
+n <- 100
+x <- rnorm(n, 0, 4)
+y <- alpha + beta * x + rnorm(n, 0, sigma)
+plot(x, y)
+```
+
+3. Create a function which implements one epoch of gradient descent and updates estimates of both $\alpha$ and $\beta$
+\frac{2}{K}\sum_{i=1}^{K} (y_i - (\alpha + \beta x_i))
+```{r}
+update_parameters <- function(alpha, beta, y, x, eta) {
+  K <- length(y)
+  dl_da <- -(2 / K) * sum(y - (alpha + beta * x))
+  dl_db <- -(2 / K) * sum(x * (y - (alpha + beta * x)))
+  
+  alpha <- alpha - eta * dl_da
+  beta <- beta - eta * dl_db
+  return(c(alpha, beta))
+}
+```
+
+4. Update parameters across many epochs and visualise their parameter estimates during training
+```{r}
+f_train_model <- function(n_epochs, eta, y, x, inits=c(0, 0)) {
+
+  m_params <- matrix(nrow = n_epochs, ncol = 2)
+  m_params[1, ] <- inits
+  for(i in 2:n_epochs) {
+    m_params[i, ] <- update_parameters(m_params[(i - 1), 1], m_params[(i - 1), 2], y, x, eta)
+  }
+  m_params <- as.data.frame(m_params)
+  colnames(m_params) <- c("alpha", "beta")
+  m_params <- m_params %>% 
+    mutate(epoch=seq_along(alpha))
+  return(m_params)
+}
+m_params <- f_train_model(2000, 0.01, y, x)
+m_params %>% 
+  melt(id.vars="epoch") %>% 
+  ggplot(aes(x=epoch, y=value, colour=as.factor(variable))) +
+  geom_line()
+```
+
+5. Draw the loss surface and use it to visualise the path of parameter estimates during training
+```{r}
+msl <- function(y, x, alpha, beta) {
+  K <- length(y)
+  return(1/K * sum((y-(alpha + beta * x))^2))
+}
+
+params <- expand_grid(alpha=seq(-2, 5, 0.1), beta=seq(-2, 5, 0.1))
+z <- map2_dbl(params$alpha, params$beta, ~msl(y, x, .x, .y))
+params <- params %>% 
+  mutate(loss=z)
+
+m_params <- m_params[1:100, ] %>% 
+  mutate(type="training")
+
+df1 <- params %>% 
+  mutate(type="loss") %>% 
+  bind_rows(m_params)
+
+ggplot(df1 %>% filter(type=="loss"), aes(x=alpha, y=beta)) +
+  geom_contour(aes(z=log(loss)), bins = 10) +
+  geom_point(data=df1 %>% filter(type=="training")) +
+  geom_line(data=df1 %>% filter(type=="training"))
+```
+
+6. How does choice of $\eta$ affect the rate of training?
+```{r}
+# Low eta
+f_train_model(2000, 0.00001, y, x) %>% 
+  melt(id.vars="epoch") %>% 
+  ggplot(aes(x=epoch, y=value, colour=as.factor(variable))) +
+  geom_line()
+
+# High eta
+f_train_model(2000, 0.05, y, x) %>% 
+  melt(id.vars="epoch") %>% 
+  ggplot(aes(x=epoch, y=value, colour=as.factor(variable))) +
+  geom_line()
+```
+
+The higher $\eta$ is, the faster the rate of training.
+
+7. Why does a high value of $\eta$ cause issues for training?
+
+```{r}
+m_params <- f_train_model(100, 0.1, y, x)
+
+m_params <- m_params[1:4, ] %>% 
+  mutate(type="training")
+
+df1 <- params %>% 
+  mutate(type="loss") %>% 
+  bind_rows(m_params)
+
+ggplot(df1 %>% filter(type=="loss"), aes(x=alpha, y=beta)) +
+  geom_contour(aes(z=log(loss)), bins = 10) +
+  geom_point(data=df1 %>% filter(type=="training")) +
+  geom_line(data=df1 %>% filter(type=="training"))
+```
+
+If too high a value is chosen, the steps taken in a given direction overshoot the curvature, resulting in an increase in the loss. If these steps are repeatedly taken, the loss divergences.
+
+8. For a reasonable value of $\eta$, visualise the mean squared loss over time
+```{r}
+m_params <- f_train_model(500, 0.01, y, x)
+
+losses <- map_dbl(seq_along(m_params$alpha), ~msl(y, x, m_params$alpha[.], m_params$beta[.]))
+m_params <- m_params %>% 
+  mutate(loss=losses)
+m_params %>% 
+  ggplot(aes(x=epoch, y=loss)) +
+  geom_line()
+```
+
+9. Overlay your estimated regression line on the data
+```{r}
+x_sim <- seq(-12, 12, 0.1)
+y_sim <- m_params$alpha[nrow(m_params)] + m_params$beta[nrow(m_params)] * x_sim
+df <- tibble(x, y, type="actual") %>% 
+  bind_rows(tibble(x=x_sim, y=y_sim, type="simulated"))
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point() +
+  geom_line(data=df %>% filter(type=="simulated"))
+
+```
+
+10. Generate similar data except with $\beta=0.02$ and $x\sim\mathcal{N}(0, 400)$. How is training impacted for this model? 
+```{r}
+alpha <- 1
+beta <- 0.02
+sigma <- 10
+n <- 100
+x <- rnorm(n, 0, 400)
+y <- alpha + beta * x + rnorm(n, 0, sigma)
+plot(x, y)
+
+params <- expand_grid(alpha=seq(-2, 5, 0.1), beta=seq(-0.05, 0.05, 0.005))
+z <- map2_dbl(params$alpha, params$beta, ~msl(y, x, .x, .y))
+params <- params %>% 
+  mutate(loss=z)
+
+m_params <- f_train_model(1000, 0.0000001, y, x) %>% 
+  mutate(type="training")
+
+df1 <- params %>% 
+  mutate(type="loss") %>% 
+  bind_rows(m_params)
+
+ggplot(df1 %>% filter(type=="loss"), aes(x=alpha, y=beta)) +
+  geom_contour(aes(z=log(loss)), bins = 10) +
+  geom_point(data=df1 %>% filter(type=="training")) +
+  geom_line(data=df1 %>% filter(type=="training"))
+```
+
+Training is very slow for $\alpha$ due to the different parameter scales.
+
+11. Standardise both the $y$ and $x$ variables and return training. How is the rate of convergence now?
+```{r}
+y_tilde <- scale(y)[, 1]
+x_tilde <- scale(x)[, 1]
+
+params <- expand_grid(alpha=seq(-2, 5, 0.1), beta=seq(-1, 2, 0.01))
+z <- map2_dbl(params$alpha, params$beta, ~msl(y_tilde, x_tilde, .x, .y))
+params <- params %>% 
+  mutate(loss=z)
+
+m_params <- f_train_model(1000, 0.01, y_tilde, x_tilde, inits = c(-1, -1)) %>% 
+  mutate(type="training")
+
+df1 <- params %>% 
+  mutate(type="loss") %>% 
+  bind_rows(m_params)
+
+ggplot(df1 %>% filter(type=="loss"), aes(x=alpha, y=beta)) +
+  geom_contour(aes(z=log(loss)), bins = 10) +
+  geom_point(data=df1 %>% filter(type=="training")) +
+  geom_line(data=df1 %>% filter(type=="training"))
+```
+
+Training now much faster: in summary, gradient descent much more efficient if data are on similar scales. So, feature scaling really important.
+
+12. Generate regression data via:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+where $\alpha=1$, $\beta=1$, $\sigma=5$ and $x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(0, 4)$ for $i =1,...,30$.
+
+Use gradient descent to obtain parameter estimates for a quadratic regression and graph the fitted line versus the data.
+
+```{r}
+alpha <- 1
+beta <- 1
+sigma <- 5
+n <- 30
+x <- rnorm(n, 0, 4)
+y <- alpha + beta * x + rnorm(n, 0, sigma)
+
+update_parameters_quad <- function(alpha, beta, gamma, y, x, eta) {
+  K <- length(y)
+  dl_da <- -(2 / K) * sum(y - (alpha + beta * x + gamma * x^2))
+  dl_db <- -(2 / K) * sum(x * (y - (alpha + beta * x + gamma * x^2)))
+  dl_dg <- -(2 / K) * sum(x^2 * (y - (alpha + beta * x + gamma * x^2)))
+  
+  alpha <- alpha - eta * dl_da
+  beta <- beta - eta * dl_db
+  gamma <- gamma - eta * dl_dg
+  return(c(alpha, beta, gamma))
+}
+
+n_epochs <- 5000
+m_params <- matrix(nrow = n_epochs, ncol = 3)
+m_params[1, ] <- c(0, 0, 0)
+for(i in 2:n_epochs) {
+  m_params[i, ] <- update_parameters_quad(m_params[(i - 1), 1], m_params[(i - 1), 2],
+                                          m_params[(i - 1), 3], y, x, 0.001)
+}
+m_params <- as.data.frame(m_params)
+colnames(m_params) <- c("alpha", "beta", "gamma")
+m_params <- m_params %>% 
+  mutate(epoch=seq_along(alpha))
+m_params %>% 
+  melt(id.vars="epoch") %>% 
+  ggplot(aes(x=epoch, y=value, colour=as.factor(variable))) +
+  geom_line()
+
+x_sim <- seq(-12, 12, 0.1)
+y_sim <- m_params$alpha[nrow(m_params)] + m_params$beta[nrow(m_params)] * x_sim + m_params$gamma[nrow(m_params)] * x_sim^2
+
+f_quadratic_regression <- function(x, alpha, beta, gamma) {
+  return(alpha + beta * x + gamma * x^2)
+}
+a <- m_params$alpha[nrow(m_params)]
+b <- m_params$beta[nrow(m_params)]
+c <- m_params$gamma[nrow(m_params)]
+f_quad <- function(x) f_quadratic_regression(x, a, b, c)
+
+df <- tibble(x, y, type="actual") %>% 
+  bind_rows(tibble(x=x_sim, y=y_sim, type="simulated"))
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point() +
+  geom_line(data=df %>% filter(type=="simulated"))
+```
+
+13. Fit the same data as generated in the previous question using linear regression. Compare the fit of the quadratic and linear models on new data generated from the same data generating process except:
+
+$x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(5, 4)$ for $i =1,...,30$
+
+Which has a better root mean squared accuracy on the new data? Why?
+
+```{r}
+m_params <- f_train_model(2000, 0.01, y, x)
+
+f_linear_regression <- function(x, alpha, beta) {
+  return(alpha + beta * x)
+}
+
+f_linear <- function(x) f_linear_regression(x,m_params$alpha[nrow(m_params)],
+                                             m_params$beta[nrow(m_params)])
+
+x1 <- rnorm(n, 5, 4)
+y1 <- alpha + beta * x1 + rnorm(n, 0, sigma)
+
+# predict y and calculate RMSEs
+y1_linear <- map_dbl(x1, f_linear)
+y1_quad <- map_dbl(x1, f_quad)
+
+sqrt(mean(y1_linear - y1)^2)
+sqrt(mean(y1_quad - y1)^2)
+```
+
+The linear model generalises better. The quadratic model has overfitted the training data, so doesn't extrapolate well to new data regimes.
+
+# KNN regression
+
+1. Generate $n=200$ paired $(x_i, y_i)$ data points by sampling:
+
+\begin{equation}
+x_i \sim \mathcal{N}(0, 4)
+\end{equation}
+
+and then:
+
+\begin{equation}
+y_i \sim \mathcal{N}(sin(x_i), 0.2)
+\end{equation}
+
+```{r}
+library(RANN)
+library(tidyverse)
+n <- 200
+x <- rnorm(n, 0, 4)
+y <- sin(x) + rnorm(n, 0, 0.2)
+
+df <- tibble(x, y) %>% 
+  mutate(type="actual")
+
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point()
+```
+
+2. Create a function which returns the KNNs for a given $x$ value (and $k$)
+```{r}
+# use RANN library (which implements KD trees)
+x_tilde <- -2.5
+fit <- nn2(x, c(x_tilde), k = 10)
+idxs <- fit$nn.idx[1, ]
+
+# visualise nearest neighbours around a point
+tibble(x, y) %>% 
+  mutate(idx=seq_along(x)) %>% 
+  mutate(nn=idx%in%idxs) %>% 
+  ggplot(aes(x=x, y=y, colour=as.factor(nn))) +
+  geom_point()
+```
+
+3. Using your answer to the previous code, create a KNN regression estimator using Euclidean distance with various values of $k$ to predict $y$. How does $k$ influence the results?
+```{r}
+f_kk_regression <- function(x_tilde, x, y, k=10) {
+  fit <- nn2(x, c(x_tilde), k = k)
+  idxs <- fit$nn.idx[1, ]
+  return(mean(y[idxs]))
+}
+
+x_sim <- seq(-10, 10, 0.1)
+
+# k = 1
+y_sim <- map_dbl(x_sim, ~f_kk_regression(., x, y, k=10))
+
+df <- tibble(x, y) %>% 
+  mutate(type="actual") %>% 
+  bind_rows(tibble(x=x_sim, y=y_sim) %>% mutate(type="regression"))
+
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point() +
+  geom_line(data=df %>% filter(type=="regression"), colour="blue")
+
+# k = 1
+y_sim <- map_dbl(x_sim, ~f_kk_regression(., x, y, k=1))
+
+df <- tibble(x, y) %>% 
+  mutate(type="actual") %>% 
+  bind_rows(tibble(x=x_sim, y=y_sim) %>% mutate(type="regression"))
+
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point() +
+  geom_line(data=df %>% filter(type=="regression"), colour="blue")
+
+# k = 100
+y_sim <- map_dbl(x_sim, ~f_kk_regression(., x, y, k=100))
+
+df <- tibble(x, y) %>% 
+  mutate(type="actual") %>% 
+  bind_rows(tibble(x=x_sim, y=y_sim) %>% mutate(type="regression"))
+
+ggplot(df %>% filter(type=="actual"), aes(x=x, y=y)) +
+  geom_point() +
+  geom_line(data=df %>% filter(type=="regression"), colour="blue")
+```
+

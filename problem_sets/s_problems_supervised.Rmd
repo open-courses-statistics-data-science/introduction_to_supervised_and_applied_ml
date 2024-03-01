@@ -1,0 +1,94 @@
+---
+title: "Supervised ML problems"
+output: html_notebook
+---
+
+# Support vector machines
+1. Suppose a categorical label: $y\in\{0,1\}$ and a data generating process: $x|y=0\sim\mathcal{N}(0,1)$ and $x|y=1\sim\mathcal{N}(2, 1)$. Find the optimal classification boundary. In doing so, determine the Bayes optimal classification accuracy. In both cases, assume categories are equally as likely to occur in the data.
+
+2. Assume that $(x_1,x_2)'|y=0\sim\mathcal{N}((0,0)', I)$ and $(x_1,x_2)'|y=1\sim\mathcal{N}((1, 1)',I)$. Simulate 100 draws from each category. Use the parametric form of each conditional density to classify each point and visualise these; in doing so, calculate the optimal classification rate on these data.
+
+3. What is the optimal classification boundary here?
+
+4. Apply (linear) SVM to the dataset you generated in the previous question. What's its predictive accuracy on your dataset? How close does it get to the optimal classification boundary?
+
+5. Fit an SVM with a radial basis function kernel. What's its predictive accuracy? What do its classification boundaries look like?
+
+6. Compare the predictive accuracy of each SVM model on a new dataset drawn from the same distribution. Which SVM performs best?
+
+7. Generate data for one class by sampling $(x_1,x_2)'|y=0\sim\mathcal{N}((0,0)', I)$. For the other class sample from $(x_1,x_2)'|y=1\sim\mathcal{N}((0,0)', 2 I)$ such that $x_1^2 + x_2^2 \geq 3^2$.
+
+8. Fit a classifier using radial basis functions and visualise the decision boundary.
+
+# Regression
+
+1. Suppose a linear regression model of the form:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+and assume you have access to $(y_i,x_i)_{i=1}^{K}$. Show that the maximum likelihood estimators of the parameters are the same as those minimising the mean squared loss function:
+
+\begin{equation}
+L = \frac{1}{K} \sum_{i=1}^{K} (y_i - (\alpha + \beta x_i))^2
+\end{equation}
+
+2. Generate simulated regression data via:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+where $\alpha=1$, $\beta=1$, $\sigma=1$ and $x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(0, 4)$ for $i =1,...,100$.
+
+3. Create a function which implements one epoch of gradient descent and updates estimates of both $\alpha$ and $\beta$.
+
+4. Update parameters across many epochs and visualise their parameter estimates during training.
+
+5. Draw the loss surface and use it to visualise the path of parameter estimates during training.
+
+6. How does choice of $\eta$ affect the rate of training?
+
+7. Why does a high value of $\eta$ cause issues for training?
+
+8. For a reasonable value of $\eta$, visualise the mean squared loss over time.
+
+9. Overlay your estimated regression line on the data.
+
+10. Generate similar data except with $\beta=0.02$ and $x\sim\mathcal{N}(0, 400)$. How is training impacted for this model? 
+
+11. Standardise both the $y$ and $x$ variables and return training. How is the rate of convergence now?
+
+12. Generate regression data via:
+
+\begin{equation}
+y_i \stackrel{i.i.d.}{\sim} \mathcal{N}(\alpha + \beta x_i, \sigma)
+\end{equation}
+
+where $\alpha=1$, $\beta=1$, $\sigma=5$ and $x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(0, 4)$ for $i =1,...,30$.
+
+12. Fit the same data as generated in the previous question using linear regression. Compare the fit of the quadratic and linear models on new data generated from the same data generating process except:
+
+$x_i \stackrel{i.i.d.}{\sim}\mathcal{N}(5, 4)$ for $i =1,...,30$
+
+Which has a better root mean squared accuracy on the new data? Why?
+
+# KNN regression
+
+1. Generate $n=200$ paired $(x_i, y_i)$ data points by sampling:
+
+\begin{equation}
+x_i \sim \mathcal{N}(0, 4)
+\end{equation}
+
+and then:
+
+\begin{equation}
+y_i \sim \mathcal{N}(sin(x_i), 0.2)
+\end{equation}
+
+2. Create a function which returns the KNNs for a given $x$ value (and $k$).
+
+3. Using your answer to the previous code, create a KNN regression estimator using Euclidean distance with various values of $k$ to predict $y$. How does $k$ influence the results?
+
